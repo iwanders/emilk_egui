@@ -1143,8 +1143,51 @@ impl GlutinWindowContext {
             {
                 log::error!("Cannot create transparent window: the GL config does not support it");
             }
-            let window =
-                glutin_winit::finalize_window(event_loop, window_attributes, &self.gl_config)?;
+
+            const USE_ORIGINAL_FINALIZE_WINDOW: bool = false;
+            let window = if USE_ORIGINAL_FINALIZE_WINDOW {
+                let window =
+                    glutin_winit::finalize_window(event_loop, window_attributes, &self.gl_config)?;
+                window
+            } else {
+                // This creates a new window using the displaybuilder, instead of just calling finalize_window.
+                // We don't have access to the native options anymore, but we do need to create a config template with
+                // flags from there.
+                // Lets just use hardware acceleration, and no depth & stencil, but force transparency.
+                let config_template_builder = glutin::config::ConfigTemplateBuilder::new()
+                    .prefer_hardware_accelerated(Some(true))
+                    .with_depth_size(0)
+                    .with_stencil_size(0)
+                    .with_transparency(viewport.builder.transparent.unwrap_or(false));
+                let display_builder = glutin_winit::DisplayBuilder::new()
+                    // we might want to expose this option to users in the future. maybe using an env var or using native_options.
+                    //
+                    // The justification for FallbackEgl over PreferEgl is at https://github.com/emilk/egui/pull/2526#issuecomment-1400229576 .
+                    .with_preference(glutin_winit::ApiPreference::FallbackEgl)
+                    .with_window_attributes(Some(window_attributes));
+
+                let (window, gl_config) = {
+                    profiling::scope!("DisplayBuilder::build");
+
+                    display_builder
+                    .build(
+                        event_loop,
+                        config_template_builder.clone(),
+                        |mut config_iterator| {
+                            let config = config_iterator.next().expect(
+                                "failed to find a matching configuration for creating glutin config",
+                            );
+                            log::debug!(
+                                "using the first config from config picker closure. config: {config:?}"
+                            );
+                            config
+                        },
+                    )
+                    .map_err(|e| crate::Error::NoGlutinConfigs(config_template_builder.build(), e))?
+                };
+                window.unwrap() // what to do if it is None?
+            };
+
             egui_winit::apply_viewport_builder_to_window(
                 &self.egui_ctx,
                 &window,
