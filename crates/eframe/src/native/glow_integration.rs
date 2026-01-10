@@ -1116,6 +1116,26 @@ impl GlutinWindowContext {
         }
     }
 
+    fn finalize_window(
+        event_loop: &ActiveEventLoop,
+        mut attributes: winit::window::WindowAttributes,
+        gl_config: &glutin::config::Config,
+    ) -> Result<Window, winit::error::OsError> {
+        // Disable transparency if the end config doesn't support it.
+        if gl_config.supports_transparency() == Some(false) {
+            // attributes = attributes.with_transparent(false);
+        }
+
+        #[cfg(x11_platform)]
+        let attributes = if let Some(x11_visual) = gl_config.x11_visual() {
+            attributes.with_x11_visual(x11_visual.visual_id() as _)
+        } else {
+            attributes
+        };
+
+        event_loop.create_window(attributes)
+    }
+
     /// Create a surface, window, and winit integration for the viewport, if missing.
     #[expect(unsafe_code)]
     pub(crate) fn initialize_window(
@@ -1143,8 +1163,7 @@ impl GlutinWindowContext {
             {
                 log::error!("Cannot create transparent window: the GL config does not support it");
             }
-            let window =
-                glutin_winit::finalize_window(event_loop, window_attributes, &self.gl_config)?;
+            let window = Self::finalize_window(event_loop, window_attributes, &self.gl_config)?;
             egui_winit::apply_viewport_builder_to_window(
                 &self.egui_ctx,
                 &window,
